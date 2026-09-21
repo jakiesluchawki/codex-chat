@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Codex Chat</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./config.js" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <section id="login-screen" class="login-screen" hidden>
+      <div class="login-card">
+        <div class="wordmark"><span class="brand-mark" aria-hidden="true">C</span> Codex Chat</div>
+        <h1 id="login-title">Bramka wymaga hasła</h1>
+        <p class="muted">Zaloguj się, aby rozmawiać przez Codexa na Macu Studio.</p>
+        <form id="login-form">
+          <details id="gateway-details" class="gateway-details">
+            <summary>Adres bramki</summary>
+            <label for="gateway-url">Adres HTTPS</label>
+            <input id="gateway-url" type="url" placeholder="https://twoja-bramka.example" autocomplete="url" spellcheck="false" />
+            <p id="gateway-hint" class="field-hint">Adres serwera działającego na Macu Studio.</p>
+          </details>
+          <label for="password">Hasło</label>
+          <input id="password" type="password" required autocomplete="current-password" />
+          <p id="login-error" class="form-error" role="alert" hidden></p>
+          <button id="login-submit" class="button primary" type="submit">Zaloguj się</button>
+          <button id="back-to-chat" class="button plain" type="button" hidden>Wróć do czatu</button>
+        </form>
+        <p class="login-footnote">Dostęp do bramki jest chroniony hasłem. Modele korzystają z konta ChatGPT zalogowanego w Codexie.</p>
+      </div>
+    </section>
+
+    <div id="app" class="app" aria-busy="true">
+      <button id="sidebar-scrim" class="sidebar-scrim" type="button" aria-label="Zamknij historię rozmów" hidden></button>
+      <aside id="sidebar" class="sidebar" aria-label="Historia rozmów">
+        <div class="sidebar-heading">
+          <div class="wordmark"><span class="brand-mark" aria-hidden="true">C</span> Codex Chat</div>
+          <button id="close-sidebar" class="icon-button mobile-only" type="button" aria-label="Zamknij historię rozmów">×</button>
+        </div>
+        <button id="new-chat" class="button new-chat" type="button"><span aria-hidden="true">＋</span> Nowa rozmowa</button>
+        <p class="section-label">Rozmowy</p>
+        <div id="chat-list" class="chat-list"></div>
+        <div class="sidebar-footer">
+          <div id="connection-indicator" class="connection-indicator"><span class="status-dot" aria-hidden="true"></span><span id="connection-text">Łączenie z bramką…</span></div>
+          <p id="rate-limits" class="rate-limits" hidden></p>
+          <button id="refresh" class="footer-button" type="button">Odśwież połączenie</button>
+          <button id="connection-settings" class="footer-button" type="button">Połączenie i logowanie</button>
+          <button id="clear-history" class="footer-button" type="button">Usuń historię rozmów</button>
+          <button id="logout" class="footer-button" type="button">Wyloguj się</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="chat-header">
+          <div class="title-row">
+            <button id="open-sidebar" class="icon-button mobile-only" type="button" aria-label="Otwórz historię rozmów" aria-controls="sidebar" aria-expanded="false">☰</button>
+            <h1 id="chat-title">Nowa rozmowa</h1>
+          </div>
+          <div class="model-controls">
+            <div class="select-field">
+              <label for="model">Model</label>
+              <select id="model" disabled><option value="">Wybierz model</option></select>
+            </div>
+            <div class="select-field">
+              <label for="effort">Poziom rozumowania</label>
+              <select id="effort" disabled><option value="">Wybierz model najpierw</option></select>
+            </div>
+          </div>
+        </header>
+
+        <div id="app-error" class="app-error" role="alert" hidden></div>
+        <div id="conversation" class="conversation" tabindex="0" aria-label="Wiadomości w rozmowie">
+          <div id="empty-state" class="empty-state">
+            <span class="empty-mark" aria-hidden="true">C</span>
+            <h2>O czym porozmawiamy?</h2>
+            <p id="empty-description">Wybierz model i zacznij rozmowę.</p>
+          </div>
+          <div id="messages" class="messages" role="log" aria-label="Rozmowa" aria-live="off"></div>
+        </div>
+
+        <div class="composer-area">
+          <form id="composer" class="composer">
+            <label for="prompt" class="sr-only">Twoja wiadomość</label>
+            <textarea id="prompt" rows="1" placeholder="Napisz wiadomość…" maxlength="50000" disabled></textarea>
+            <div class="composer-bottom">
+              <p id="composer-hint">Najpierw wybierz model.</p>
+              <button id="stop" class="button stop-button" type="button" hidden><span aria-hidden="true">■</span> Zatrzymaj</button>
+              <button id="send" class="button primary send-button" type="submit" disabled><span>Wyślij</span><span aria-hidden="true">↑</span></button>
+            </div>
+          </form>
+          <p class="composer-footnote">Codex może się mylić. Sprawdzaj ważne informacje.</p>
+        </div>
+        <div id="announcement" class="sr-only" role="status" aria-live="polite"></div>
+      </main>
+    </div>
+
+    <dialog id="delete-dialog" class="delete-dialog">
+      <h2 id="delete-title">Usunąć historię rozmów?</h2>
+      <p id="delete-description">Rozmowy zapisane przez tę bramkę zostaną usunięte. Tej operacji nie można cofnąć.</p>
+      <p id="delete-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button id="delete-cancel" class="button" type="button">Anuluj</button>
+        <button id="delete-confirm" class="button danger" type="button">Usuń</button>
+      </div>
+    </dialog>
+  </body>
+</html>

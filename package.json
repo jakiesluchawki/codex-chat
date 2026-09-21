@@ -1,0 +1,18 @@
+{
+  "name": "codex-chat-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Prywatny chatbot przez zalogowanego Codexa na Macu Studio.",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server/index.mjs",
+    "test": "node --test",
+    "password": "node scripts/set-password.mjs",
+    "install:macos": "node scripts/install-macos.mjs",
+    "install:https": "node scripts/install-https-macos.mjs",
+    "uninstall:macos": "node scripts/uninstall-macos.mjs",
+    "tunnel": "node scripts/tunnel.mjs",
+    "https": "bash scripts/start-https.sh"
+  }
+}

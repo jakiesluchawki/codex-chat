@@ -1,0 +1,10 @@
+.data/
+.env
+.env.*
+!.env.example
+.cloudflared/
+node_modules/
+coverage/
+*.log
+.DS_Store
+npm-debug.log*
