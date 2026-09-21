@@ -2,7 +2,15 @@
 
 Prosty, prywatny chatbot z wyborem **Astry**, **Sola** i mocy rozumowania. Lista mocy pochodzi z Codexa na Macu Studio; jeśli konto nie udostępnia któregoś modelu, bramka go nie zastępuje innym.
 
-Logowanie do strony jest osobne. Codex pozostaje zalogowany przez ChatGPT na Macu Studio. Rozmowy zużywają wspólny limit tego konta Codex; bramka nie używa klucza API ani nie przełącza się na rozliczenie API. Nie tworzy dodatkowych limitów.
+Logowanie do strony jest osobne. Codex pozostaje zalogowany przez ChatGPT na Macu Studio. Rozmowy zużywają wspólny limit tego konta Codex; bramka nie używa klucza API ani nie przełącza się na rozliczenie API. Bramka nie zwiększa puli konta Codex.
+
+Bramka ma **niezależny tygodniowy licznik wyłącznie własnych rozmów**. Początkowa pula wynosi **500 000 umownych jednostek**. Inne zadania Codexa nie pomniejszają tego licznika. Pełne limity konta nadal obowiązują i mogą osobno zablokować odpowiedzi po stronie Codexa.
+
+Rzeczywiste odczyty tokenów własnych rozmów są przeliczane lokalnie: wejście bez cache × 1, wejście z cache × 0,1, wyjście × 4; następnie Astra × 2 albo Sol × 1. To pomocnicze wagi do kalibracji, a nie udokumentowany sposób rozliczania Codexa. Pula 500 000 jest orientacyjną wartością początkową dla celu około 10%; nie można potwierdzić dokładnych 10% ukrytej puli Codexa.
+
+`CHAT_WEEKLY_BUDGET_UNITS` pozwala dostroić pulę na podstawie pomiarów własnych rozmów; nowa wartość obowiązuje od kolejnego tygodniowego okna. Stan w `.data/budget.json` przetrwa restart serwera. Kolejne tygodniowe okno odnawia własną pulę bramki. Zużycie innych zadań nie zmienia jej automatycznie.
+
+Codex może podać zużycie dopiero po zakończeniu odpowiedzi. Bramka blokuje kolejne wiadomości po wyczerpaniu puli, ale ostatnia odpowiedź może przekroczyć pozostały budżet. To orientacyjny ogranicznik użycia, a nie gwarancja zachowania dokładnie 90% limitu konta.
 
 ```
 Telefon / komputer → HTTPS → hasło bramki → Mac Studio → zalogowany Codex
@@ -54,6 +62,17 @@ launchctl kickstart -k gui/$(id -u)/com.codex-chat.gateway
 
 `npm run uninstall:macos` usuwa własne LaunchAgenty bramki i tunelu, zachowując dane rozmów oraz login Codexa. Nie zatrzymuje innych zadań Codexa.
 
+### Repozytorium na dysku zewnętrznym
+
+Jeżeli `launchd` zgłasza `Unable to open stdout path` i `Operation not permitted` dla ścieżki `/Volumes/…`, kod usługi i jej dane można umieścić w wewnętrznym katalogu aplikacji. Repozytorium źródłowe zostaje na dysku zewnętrznym. Przenieś wyłącznie `.data/` tej bramki do nowego katalogu danych, zachowując istniejący stan limitu i rozmowy, a następnie użyj:
+
+```bash
+npm run install:macos -- --runtime-dir "$HOME/Library/Application Support/CodexChat" --data-dir "$HOME/Library/Application Support/CodexChat/.data"
+npm run install:https -- --runtime-dir "$HOME/Library/Application Support/CodexChat" --data-dir "$HOME/Library/Application Support/CodexChat/.data"
+```
+
+`--runtime-dir` kopiuje kod aplikacji, a `--data-dir` wskazuje jej dane i logi. Dotychczasowy `CODEX_HOME` jest zachowany; login Codexa pozostaje w swojej dotychczasowej lokalizacji. Przy aktualizacji kodu powtórz instalację z tymi samymi flagami albo zaktualizuj kopię kodu w katalogu usługi, zachowując `.data/`.
+
 ## HTTPS z dowolnego miejsca
 
 Do krótkiego testu można użyć tunelu bez własnej domeny:
@@ -72,6 +91,14 @@ npm run install:https
 ```
 
 Własny LaunchAgent `com.codex-chat.tunnel` utrzymuje proces `cloudflared` w sesji użytkownika. Odczytaj aktualny adres z `.data/gateway-url.json`; po restarcie procesu może się zmienić. Jeżeli `cloudflared` nie jest w `PATH`, instalator sprawdza również `~/.local/bin/cloudflared`, albo przyjmuje `--cloudflared-bin /pełna/ścieżka/cloudflared`. Ten skrypt nie zmienia konfiguracji ani innych tuneli Cloudflare.
+
+Jeśli `gh` jest już zalogowany na tym użytkowniku i ma zapis do repozytorium, tunel może sam aktualizować adres bramki na stronie Pages:
+
+```bash
+npm run install:https -- --github-repo twoje-konto/codex-chat --gh-bin /pełna/ścieżka/gh
+```
+
+Publikator zmienia tylko `public/config.js` w podanym repozytorium `codex-chat` na gałęzi `main`. Nie kopiuje credentiali. Po zmianie adresu workflow publikuje Pages; zanim zakończy się publikacja, strona może jeszcze wskazywać poprzedni adres. Błąd dostępu do GitHuba nie zatrzymuje tunelu; wtedy aktualny adres trzeba wpisać ręcznie. Stały adres domeny nadal wymaga nazwanego tunelu.
 
 ### Stały adres
 
@@ -133,6 +160,8 @@ Zmiana hasła: `npm run password`. Nowe logowania użyją go od razu; restart se
 | `CHAT_DATA_DIR` | `.data/` w katalogu repozytorium |
 | `ALLOWED_ORIGINS` | `https://jakiesluchawki.github.io` oraz własny origin bramki |
 | `CLOUDFLARED_BIN` | `cloudflared` z `PATH`, dla skryptu HTTPS |
+| `CHAT_GITHUB_REPO` | opcjonalne `twoje-konto/codex-chat` do aktualizacji adresu na Pages |
+| `GH_BIN` | `gh` z `PATH`, dla opcjonalnej publikacji adresu |
 
 `npm run password -- --stdin` pozwala przekazać hasło przez jawny potok bez argumentu zawierającego hasło. Do zwykłej konfiguracji używaj interaktywnego pytania. Jeśli zmieniasz `CHAT_DATA_DIR`, ustaw tę samą ścieżkę podczas konfiguracji hasła, instalacji i uruchamiania; nie publikuj tego katalogu.
 

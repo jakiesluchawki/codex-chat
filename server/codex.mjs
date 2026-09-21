@@ -103,8 +103,12 @@ export class CodexBridge extends EventEmitter {
       cursor = result.nextCursor;
     } while (cursor);
     let rateLimits = null;
-    try { rateLimits = await this.rpc('account/rateLimits/read', {}, 10_000); } catch {}
+    try { rateLimits = await this.limits(); } catch {}
     return { connected: true, authMode: 'chatgpt', models: pickerModels(allModels), rateLimits };
+  }
+  async limits() {
+    await this.ready();
+    return this.rpc('account/rateLimits/read', {}, 10_000);
   }
   async thread(chat) {
     const common = { model: chat.model, modelProvider: 'openai', cwd: this.workspace, baseInstructions: CHAT_INSTRUCTIONS, developerInstructions: CHAT_INSTRUCTIONS, approvalPolicy: 'never', permissions: this.profile, config: this.threadConfig };

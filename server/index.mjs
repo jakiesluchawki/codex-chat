@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { Auth } from './auth.mjs';
 import { ChatStore } from './store.mjs';
 import { CodexBridge, MODEL_NAMES } from './codex.mjs';
+import { Budget } from './budget.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const data = resolve(process.env.CHAT_DATA_DIR || join(root, '.data'));
@@ -18,8 +19,33 @@ if (!existsSync(join(data, 'access.json'))) {
 const auth = new Auth(join(data, 'access.json'));
 const store = new ChatStore(data);
 const codex = new CodexBridge(workspace);
+const budget = new Budget(join(data, 'budget.json'));
 const allowedOrigins = new Set((process.env.ALLOWED_ORIGINS || 'https://jakiesluchawki.github.io').split(',').map(value => value.trim()).filter(Boolean));
 let active = null;
+let lastBudget = budget.inspect(null);
+const usageTurns = new Map();
+function trackUsageTurn(chat, turnId) {
+  usageTurns.set(JSON.stringify([chat.threadId, turnId]), { chat, model: chat.model });
+  if (usageTurns.size > 1000) usageTurns.delete(usageTurns.keys().next().value);
+}
+// Usage can arrive after turn/completed. Keep accounting separate from the stream.
+codex.on('notification', ({ method, params }) => {
+  if (method !== 'thread/tokenUsage/updated') return;
+  const tracked = usageTurns.get(JSON.stringify([params?.threadId, params?.turnId]));
+  if (!tracked) return;
+  tracked.chat.usage = params.tokenUsage;
+  lastBudget = budget.recordUsage({ threadId: params.threadId, turnId: params.turnId, model: tracked.model, tokenUsage: params.tokenUsage });
+  store.save();
+});
+
+async function gatewayStatus() {
+  const status = await codex.status();
+  lastBudget = budget.inspect(status.rateLimits);
+  const windowsOnly = snapshot => snapshot ? { primary: snapshot.primary, secondary: snapshot.secondary } : null;
+  const raw = status.rateLimits;
+  const rateLimits = raw ? { rateLimits: windowsOnly(raw.rateLimits), rateLimitsByLimitId: raw.rateLimitsByLimitId ? Object.fromEntries(Object.entries(raw.rateLimitsByLimitId).map(([id, snapshot]) => [id, windowsOnly(snapshot)])) : null } : null;
+  return { ...status, rateLimits, budget: lastBudget };
+}
 
 function json(response, status, value) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -47,8 +73,10 @@ async function chatTurn(request, response, input) {
     return true;
   };
   try {
-    const status = await codex.status();
+    const status = await gatewayStatus();
     if (cancelledBeforeStart()) return;
+    if (!status.budget.allowed) throw Object.assign(new Error(status.budget.missing ? 'Nie można sprawdzić limitu bramki. Wysyłanie jest zablokowane.' : 'Limit bramki wykorzystany. Poczekaj na odnowienie jej tygodniowej puli.'), { status: status.budget.missing ? 503 : 429, budget: status.budget });
+    if (status.budget.providerBlocked) throw Object.assign(new Error('Codex zgłasza wyczerpanie limitu konta. Własna pula bramki pozostaje bez zmian.'), { status: 429, budget: status.budget });
     const model = status.models.find(model => model.id === input.model);
     if (!model?.efforts.some(effort => effort.id === input.effort)) throw Object.assign(new Error('Ten model lub poziom rozumowania jest niedostępny w Codexie.'), { status: 400 });
     const chat = input.chatId ? store.get(input.chatId) : store.create(input.text, input.model, input.effort);
@@ -58,6 +86,8 @@ async function chatTurn(request, response, input) {
     chat.effort = input.effort;
     await codex.thread(chat);
     if (cancelledBeforeStart()) return;
+    lastBudget = budget.beginTurn({ key: chat.id, model: chat.model, accountLimits: status.rateLimits, threadId: chat.threadId, tokenUsage: chat.usage });
+    if (!lastBudget.allowed) throw Object.assign(new Error('Nie można uruchomić rozmowy w ramach limitu bramki.'), { status: lastBudget.missing ? 503 : 429, budget: lastBudget });
     chat.messages.push({ role: 'user', text: input.text, model: chat.model, effort: chat.effort });
     chat.active = true;
     chat.updatedAt = Date.now();
@@ -66,6 +96,7 @@ async function chatTurn(request, response, input) {
     response.flushHeaders();
     const send = event => { if (!response.destroyed && !response.writableEnded) response.write(JSON.stringify(event) + '\n'); };
     send({ type: 'chat', chat: store.public(chat) });
+    send({ type: 'budget', budget: lastBudget });
     const messages = new Map();
     let finished = false;
     let startSent = false;
@@ -89,7 +120,7 @@ async function chatTurn(request, response, input) {
       chat.updatedAt = Date.now();
       for (const message of messages.values()) message.status = status;
       store.save();
-      send({ type: 'done', status, ...(error ? { error } : {}) });
+      send({ type: 'done', status, budget: lastBudget, ...(error ? { error } : {}) });
       if (!response.destroyed && !response.writableEnded) response.end();
       finishTurn();
     };
@@ -119,6 +150,7 @@ async function chatTurn(request, response, input) {
       if (method === 'turn/started') {
         if (lock.turnId && lock.turnId !== params.turn.id) return;
         lock.turnId = params.turn.id;
+        trackUsageTurn(chat, lock.turnId);
         if (lock.cancelled) interrupt();
         return;
       }
@@ -135,11 +167,15 @@ async function chatTurn(request, response, input) {
         if (method === 'item/agentMessage/delta') { message.text += params.delta; send({ type: 'delta', itemId, delta: params.delta }); }
         else { message.text = params.item.text; send({ type: 'message', itemId, text: message.text }); }
       }
-      if (method === 'thread/tokenUsage/updated') { chat.usage = params.tokenUsage; send({ type: 'usage', usage: params.tokenUsage }); }
+      if (method === 'thread/tokenUsage/updated') {
+        send({ type: 'usage', usage: params.tokenUsage, budget: lastBudget });
+        send({ type: 'budget', budget: lastBudget });
+        if (!lastBudget.allowed) lock.cancel(lastBudget.missing ? 'Nie można zapisać zużycia bramki. Odpowiedź została zatrzymana.' : 'Wykorzystano tygodniowy limit bramki.');
+      }
       if (method === 'turn/completed') finish(params.turn.status, cancellationError || params.turn.error?.message);
     };
     const onDisconnect = error => finish(lock.cancelled ? 'interrupted' : 'failed', cancellationError || (lock.cancelled ? undefined : error.message));
-    const heartbeat = setInterval(() => { send({ type: 'heartbeat' }); store.save(); }, 15_000);
+    const heartbeat = setInterval(() => { send({ type: 'heartbeat', budget: lastBudget }); store.save(); }, 15_000);
     const deadline = setTimeout(() => {
       lock.cancel('Upłynął limit czasu odpowiedzi.');
     }, 20 * 60_000);
@@ -155,6 +191,7 @@ async function chatTurn(request, response, input) {
         return;
       }
       lock.turnId = result.turn.id;
+      trackUsageTurn(chat, lock.turnId);
       if (['completed', 'interrupted', 'failed'].includes(result.turn.status)) finish(result.turn.status, cancellationError || result.turn.error?.message);
       else if (lock.cancelled) lock.cancel();
     }).catch(error => { if (!finished) lock.cancel(error.message); });
@@ -187,7 +224,7 @@ const server = createServer(async (request, response) => {
       if (request.method === 'POST' && path === '/api/login') return json(response, 200, auth.login((await body(request)).password));
       if (!auth.check(request)) return json(response, 401, { error: 'Zaloguj się do bramki.' });
       if (request.method === 'POST' && path === '/api/logout') { auth.logout(request); return json(response, 200, { ok: true }); }
-      if (request.method === 'GET' && path === '/api/status') return json(response, 200, await codex.status());
+      if (request.method === 'GET' && path === '/api/status') return json(response, 200, await gatewayStatus());
       if (request.method === 'GET' && path === '/api/chats') return json(response, 200, { chats: store.list() });
       if (request.method === 'DELETE' && path.startsWith('/api/chats/')) return json(response, 200, { deleted: store.delete(path.slice('/api/chats/'.length)) });
       if (request.method === 'POST' && path === '/api/chat') return await chatTurn(request, response, await body(request));
@@ -211,7 +248,7 @@ const server = createServer(async (request, response) => {
   } catch (error) {
     if (response.headersSent) {
       if (!response.destroyed) response.end(JSON.stringify({ type: 'error', message: error.message }) + '\n');
-    } else json(response, error.status || 503, { error: error.message });
+    } else json(response, error.status || 503, { error: error.message, ...(error.budget ? { budget: error.budget } : {}) });
   }
 });
 server.requestTimeout = 30_000;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { constants } from 'node:fs';
-import { access, chmod, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, cp, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -11,18 +11,20 @@ const marker = '<!-- Managed by codex-chat scripts/install-https-macos.mjs. -->'
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function parseArgs(args) {
-  const options = { dataDir: process.env.CHAT_DATA_DIR || resolve(projectRoot, '.data'), binary: process.env.CLOUDFLARED_BIN, port: process.env.PORT || '8787', dryRun: false };
-  const values = { '--data-dir': 'dataDir', '--cloudflared-bin': 'binary', '--port': 'port' };
+  const options = { dataDir: process.env.CHAT_DATA_DIR || resolve(projectRoot, '.data'), runtimeDir: projectRoot, binary: process.env.CLOUDFLARED_BIN, port: process.env.PORT || '8787', githubRepo: process.env.CHAT_GITHUB_REPO, ghBin: process.env.GH_BIN, dryRun: false };
+  const values = { '--data-dir': 'dataDir', '--runtime-dir': 'runtimeDir', '--cloudflared-bin': 'binary', '--port': 'port', '--github-repo': 'githubRepo', '--gh-bin': 'ghBin' };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--help' || args[i] === '-h') {
-      console.log('Użycie: node scripts/install-https-macos.mjs [--cloudflared-bin ŚCIEŻKA] [--data-dir ŚCIEŻKA] [--port PORT] [--dry-run]\nInstaluje własny LaunchAgent tymczasowego tunelu HTTPS. Nie kopiuje ani nie odczytuje credentiali Cloudflare.');
+      console.log('Użycie: node scripts/install-https-macos.mjs [--cloudflared-bin ŚCIEŻKA] [--data-dir ŚCIEŻKA] [--runtime-dir ŚCIEŻKA] [--port PORT] [--github-repo KONTO/codex-chat --gh-bin ŚCIEŻKA] [--dry-run]\nInstaluje własny LaunchAgent tymczasowego tunelu HTTPS. Opcjonalnie aktualizuje public/config.js przez istniejący login gh. Nie kopiuje credentiali.');
       process.exit(0);
     } else if (args[i] === '--dry-run') options.dryRun = true;
     else if (values[args[i]] && args[i + 1]) options[values[args[i]]] = args[++i];
     else throw new Error(`Nieznany lub niepełny argument: ${args[i]}`);
   }
   options.dataDir = resolve(options.dataDir);
+  options.runtimeDir = resolve(options.runtimeDir);
   if (!/^\d+$/.test(options.port) || Number(options.port) < 1024 || Number(options.port) > 65535) throw new Error('Port musi być liczbą od 1024 do 65535.');
+  if (options.githubRepo && !/^[A-Za-z0-9_.-]+\/codex-chat$/.test(options.githubRepo)) throw new Error('Podaj repo w formacie twoje-konto/codex-chat.');
   return options;
 }
 
@@ -56,6 +58,14 @@ async function main() {
   if (!/^[a-f0-9]{64}$/i.test(credentials.salt || '') || !/^[a-f0-9]{128}$/i.test(credentials.hash || '')) throw new Error('Nieprawidłowy access.json. Ustaw ponownie hasło bramki.');
   await access(resolve(projectRoot, 'scripts/tunnel.mjs'), constants.R_OK);
   const binary = await discoverBinary(options.binary);
+  let ghBin;
+  if (options.githubRepo) {
+    for (const candidate of options.ghBin ? [options.ghBin] : ['gh', resolve(homedir(), '.local/bin/gh'), '/opt/homebrew/bin/gh']) {
+      ghBin = await executable(candidate);
+      if (ghBin) break;
+    }
+    if (!ghBin) throw new Error('Do automatycznej publikacji adresu potrzebny jest gh. Podaj --gh-bin /pełna/ścieżka/gh.');
+  }
   const domain = `gui/${process.getuid()}`;
   const target = `${domain}/${label}`;
   const agentsDir = resolve(homedir(), 'Library/LaunchAgents');
@@ -67,17 +77,20 @@ async function main() {
   if (loaded.error) throw new Error('Nie udało się odczytać stanu launchd.');
   if (loaded.status === 0 && previous === undefined) throw new Error('Usługa o tej nazwie działa bez pliku należącego do bramki; instalator jej nie zatrzyma.');
   if (options.dryRun) {
-    console.log(`Plan: ${plistPath}\nNode: ${process.execPath}\ncloudflared: ${binary}\nDane: ${options.dataDir}\nNie dokonano zmian.`);
+    console.log(`Plan: ${plistPath}\nNode: ${process.execPath}\ncloudflared: ${binary}\nKod uruchamiany: ${options.runtimeDir}\nDane: ${options.dataDir}\nPublikacja adresu: ${options.githubRepo || 'wyłączona'}\nNie dokonano zmian.`);
     return;
   }
+  const env = { CHAT_DATA_DIR: options.dataDir, CLOUDFLARED_BIN: binary, PORT: options.port, PATH: `${dirname(process.execPath)}:${dirname(binary)}:${ghBin ? dirname(ghBin) + ':' : ''}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` };
+  if (options.githubRepo) { env.CHAT_GITHUB_REPO = options.githubRepo; env.GH_BIN = ghBin; }
+  if (process.env.GH_CONFIG_DIR) env.GH_CONFIG_DIR = process.env.GH_CONFIG_DIR;
   const content = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 ${marker}
 <plist version="1.0"><dict>
   <key>Label</key><string>${label}</string>
-  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(resolve(projectRoot, 'scripts/tunnel.mjs'))}</string></array>
-  <key>WorkingDirectory</key><string>${xml(projectRoot)}</string>
-  <key>EnvironmentVariables</key><dict><key>CHAT_DATA_DIR</key><string>${xml(options.dataDir)}</string><key>CLOUDFLARED_BIN</key><string>${xml(binary)}</string><key>PORT</key><string>${xml(options.port)}</string></dict>
+  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(resolve(options.runtimeDir, 'scripts/tunnel.mjs'))}</string></array>
+  <key>WorkingDirectory</key><string>${xml(options.runtimeDir)}</string>
+  <key>EnvironmentVariables</key><dict>${Object.entries(env).map(([key, value]) => `<key>${key}</key><string>${xml(value)}</string>`).join('')}</dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
@@ -98,6 +111,10 @@ ${marker}
     if (loaded.status === 0) {
       const stopped = launchctl(['bootout', target]);
       if (stopped.error || stopped.status !== 0) throw new Error('Nie udało się zatrzymać poprzedniej własnej usługi tunelu.');
+    }
+    if (options.runtimeDir !== projectRoot) {
+      await mkdir(resolve(options.runtimeDir, 'scripts'), { recursive: true, mode: 0o700 });
+      for (const name of ['tunnel.mjs', 'publisher.mjs']) await cp(resolve(projectRoot, 'scripts', name), resolve(options.runtimeDir, 'scripts', name), { force: true });
     }
     await rename(temporary, plistPath);
     await chmod(plistPath, 0o600);

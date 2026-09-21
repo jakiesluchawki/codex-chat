@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { constants } from 'node:fs';
-import { access, chmod, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, cp, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -16,18 +16,20 @@ function parseArgs(args) {
     codexBin: process.env.CODEX_BIN,
     port: process.env.PORT || '8787',
     origins: process.env.ALLOWED_ORIGINS,
+    runtimeDir: projectRoot,
     dryRun: false,
   };
-  const values = { '--data-dir': 'dataDir', '--codex-bin': 'codexBin', '--port': 'port', '--allowed-origins': 'origins' };
+  const values = { '--data-dir': 'dataDir', '--runtime-dir': 'runtimeDir', '--codex-bin': 'codexBin', '--port': 'port', '--allowed-origins': 'origins' };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--help' || args[i] === '-h') {
-      console.log('Użycie: node scripts/install-macos.mjs [--data-dir ŚCIEŻKA] [--codex-bin ŚCIEŻKA] [--port PORT] [--allowed-origins URL,URL] [--dry-run]\nInstaluje tylko własny LaunchAgent bieżącego użytkownika. Nie kopiuje loginu Codexa.');
+      console.log('Użycie: node scripts/install-macos.mjs [--data-dir ŚCIEŻKA] [--runtime-dir ŚCIEŻKA] [--codex-bin ŚCIEŻKA] [--port PORT] [--allowed-origins URL,URL] [--dry-run]\nInstaluje tylko własny LaunchAgent bieżącego użytkownika. --runtime-dir kopiuje kod aplikacji poza repo, bez danych i loginu Codexa.');
       process.exit(0);
     } else if (args[i] === '--dry-run') options.dryRun = true;
     else if (values[args[i]] && args[i + 1]) options[values[args[i]]] = args[++i];
     else throw new Error(`Nieznany lub niepełny argument: ${args[i]}`);
   }
   options.dataDir = resolve(options.dataDir);
+  options.runtimeDir = resolve(options.runtimeDir);
   if (!/^\d+$/.test(options.port) || Number(options.port) < 1024 || Number(options.port) > 65535) throw new Error('Port musi być liczbą od 1024 do 65535.');
   if (options.origins !== undefined) {
     for (const origin of options.origins.split(',').filter(Boolean)) {
@@ -86,8 +88,8 @@ function plist(options, codexBin) {
 ${marker}
 <plist version="1.0"><dict>
   <key>Label</key><string>${label}</string>
-  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(resolve(projectRoot, 'server/index.mjs'))}</string></array>
-  <key>WorkingDirectory</key><string>${xml(projectRoot)}</string>
+  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(resolve(options.runtimeDir, 'server/index.mjs'))}</string></array>
+  <key>WorkingDirectory</key><string>${xml(options.runtimeDir)}</string>
   <key>EnvironmentVariables</key><dict>${Object.entries(env).map(([key, value]) => `<key>${key}</key><string>${xml(value)}</string>`).join('')}</dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -126,7 +128,7 @@ async function main() {
   if (currentlyLoaded.status === 0 && previous === undefined) throw new Error('Usługa o tej nazwie już działa bez pliku należącego do bramki; instalator jej nie zatrzyma.');
   const content = plist(options, codexBin);
   if (options.dryRun) {
-    console.log(`Plan: ${plistPath}\nNode: ${process.execPath}\nCodex: ${codexBin}\nDane: ${options.dataDir}\nAdres lokalny: http://127.0.0.1:${options.port}\nNie dokonano zmian.`);
+    console.log(`Plan: ${plistPath}\nNode: ${process.execPath}\nCodex: ${codexBin}\nKod uruchamiany: ${options.runtimeDir}\nDane: ${options.dataDir}\nAdres lokalny: http://127.0.0.1:${options.port}\nNie dokonano zmian.`);
     return;
   }
   await mkdir(resolve(options.dataDir, 'logs'), { recursive: true, mode: 0o700 });
@@ -142,6 +144,10 @@ async function main() {
     if (currentlyLoaded.status === 0) {
       const stopped = launchctl(['bootout', target]);
       if (stopped.error || stopped.status !== 0) throw new Error('Nie udało się zatrzymać poprzedniej własnej usługi.');
+    }
+    if (options.runtimeDir !== projectRoot) {
+      await mkdir(options.runtimeDir, { recursive: true, mode: 0o700 });
+      for (const name of ['server', 'public', 'scripts', 'package.json']) await cp(resolve(projectRoot, name), resolve(options.runtimeDir, name), { recursive: true, force: true });
     }
     await rename(temporary, plistPath);
     await chmod(plistPath, 0o600);

@@ -45,7 +45,18 @@
         <div id="chat-list" class="chat-list"></div>
         <div class="sidebar-footer">
           <div id="connection-indicator" class="connection-indicator"><span class="status-dot" aria-hidden="true"></span><span id="connection-text">Łączenie z bramką…</span></div>
-          <p id="rate-limits" class="rate-limits" hidden></p>
+          <div id="rate-limits" class="rate-limits" role="status">Limit bramki jest sprawdzany.</div>
+          <p id="budget-note" class="rate-limits" hidden></p>
+          <details id="budget-details" class="gateway-details" hidden>
+            <summary>Jak działa pula bramki</summary>
+            <p id="budget-estimate" class="rate-limits"></p>
+            <p id="budget-method-note" class="rate-limits"></p>
+          </details>
+          <details id="account-limits-details" class="gateway-details" hidden>
+            <summary>Limit konta Codex</summary>
+            <p class="rate-limits">Globalna pula konta, współdzielona z innymi rozmowami w Codexie.</p>
+            <p id="account-rate-limits" class="rate-limits"></p>
+          </details>
           <button id="refresh" class="footer-button" type="button">Odśwież połączenie</button>
           <button id="connection-settings" class="footer-button" type="button">Połączenie i logowanie</button>
           <button id="clear-history" class="footer-button" type="button">Usuń historię rozmów</button>

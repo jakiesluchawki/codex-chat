@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { publishGatewayUrl } from './publisher.mjs';
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const dataDir = resolve(process.env.CHAT_DATA_DIR || resolve(projectRoot, '.data'));
@@ -33,7 +34,23 @@ async function main() {
   let outputTail = '';
   let currentUrl;
   let stopped = false;
+  let retry;
+  let publicationAttempts = 0;
   let updates = Promise.resolve();
+  const publish = (url) => {
+    if (!process.env.CHAT_GITHUB_REPO || stopped || currentUrl !== url) return;
+    clearTimeout(retry);
+    try {
+      const result = publishGatewayUrl(url);
+      publicationAttempts = 0;
+      console.log(result.changed ? 'Zaktualizowano adres bramki na GitHubie. Publikacja Pages może potrwać chwilę.' : 'Adres bramki na GitHubie jest aktualny.');
+    } catch (error) {
+      publicationAttempts++;
+      console.error(error.message);
+      if (publicationAttempts < 4) retry = setTimeout(() => publish(url), [30_000, 120_000, 300_000][publicationAttempts - 1]).unref();
+      else console.error('Automatyczna publikacja adresu nie powiodła się po kilku próbach. Bieżący adres pozostaje w gateway-url.json.');
+    }
+  };
   const consume = (chunk) => {
     outputTail = (outputTail + chunk.toString('utf8')).slice(-8192);
     const candidate = outputTail.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com\b/i)?.[0];
@@ -49,6 +66,8 @@ async function main() {
         await rm(temporary, { force: true });
       }
       console.log(`Tunel HTTPS: ${candidate}`);
+      publicationAttempts = 0;
+      publish(candidate);
     }).catch(() => {
       console.error('Nie udało się zapisać bieżącego adresu HTTPS.');
       child.kill('SIGTERM');
@@ -61,18 +80,22 @@ async function main() {
   });
   const stop = () => {
     stopped = true;
+    clearTimeout(retry);
     child.kill('SIGTERM');
     setTimeout(() => child.kill('SIGKILL'), 5000).unref();
   };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   child.once('close', async (code) => {
+    const requestedStop = stopped;
+    stopped = true;
+    clearTimeout(retry);
     await updates;
     await rm(urlPath, { force: true }).catch(() => {});
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);
-    if (!stopped) console.error(`Tunel został zakończony (kod ${code ?? 'brak'}). LaunchAgent ponowi próbę, jeśli jest zainstalowany.`);
-    process.exitCode = stopped ? 0 : (code || 1);
+    if (!requestedStop) console.error(`Tunel został zakończony (kod ${code ?? 'brak'}). LaunchAgent ponowi próbę, jeśli jest zainstalowany.`);
+    process.exitCode = requestedStop ? 0 : (code > 0 ? code : 1);
   });
 }
 

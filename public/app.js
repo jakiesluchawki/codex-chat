@@ -7,7 +7,7 @@
     "login-title", "login-error", "login-submit", "back-to-chat", "gateway-details", "gateway-url",
     "gateway-hint", "password", "new-chat", "chat-list", "chat-title", "model", "effort", "conversation",
     "empty-state", "empty-description", "messages", "composer", "prompt", "composer-hint", "send", "stop",
-    "connection-indicator", "connection-text", "rate-limits", "refresh", "connection-settings", "clear-history",
+    "connection-indicator", "connection-text", "rate-limits", "budget-note", "budget-details", "budget-estimate", "budget-method-note", "account-limits-details", "account-rate-limits", "refresh", "connection-settings", "clear-history",
     "logout", "app-error", "announcement", "delete-dialog", "delete-title", "delete-description",
     "delete-error", "delete-cancel", "delete-confirm",
   ].map((id) => [id, $(id)]));
@@ -18,7 +18,7 @@
   const isGitHubPages = location.hostname === "github.io" || location.hostname.endsWith(".github.io");
   const state = {
     gateway: runtimeGateway || storageRead(localStorage, "codex-chat-gateway") || (isGitHubPages ? "" : location.origin),
-    token: "", ready: false, models: [], chats: [], selectedId: null, model: "", effort: "", run: null,
+    token: "", ready: false, models: [], chats: [], selectedId: null, model: "", effort: "", run: null, budget: null,
     sidebarOpen: false, deleting: false, deleteIds: [], renderScheduled: false, forceScroll: false,
     preferences: parseStored(storageRead(localStorage, "codex-chat-preferences")),
   };
@@ -34,6 +34,8 @@
   function sessionKey() { return `codex-chat-session:${state.gateway}`; }
   function activeChat() { return state.run?.chat || state.chats.find((chat) => chat.active); }
   function isBusy() { return Boolean(activeChat()); }
+  function budgetAllowsSend() { return state.budget?.enabled === true && state.budget.allowed === true; }
+  function budgetHint() { return state.budget?.allowed === false ? "Limit bramki wykorzystany. Poczekaj na odnowienie." : "Limit bramki jest sprawdzany."; }
   function selectedChat() { return state.chats.find((chat) => chat.id === state.selectedId); }
   function modelName(id) { return state.models.find((model) => model.id === id)?.name || ({ "gpt-6-astra": "Astra", "gpt-5.6-sol": "Sol" }[id]) || "Codex"; }
   function effortName(id) { return effortLabels[id] || state.models.find((model) => model.id === state.model)?.efforts.find((effort) => effort.id === id)?.label || id || ""; }
@@ -72,6 +74,7 @@
       let message = response.status === 401 ? "Sesja wygasła lub hasło jest nieprawidłowe. Zaloguj się ponownie." : `Bramka zwróciła błąd ${response.status}.`;
       try {
         const body = await response.json();
+        if (body.budget) applyBudget(body.budget);
         const serverMessage = body.error?.message || body.error || body.message;
         if (typeof serverMessage === "string") message = serverMessage.slice(0, 500);
       } catch { /* Odpowiedź serwera nie zawsze jest JSON-em. */ }
@@ -96,7 +99,7 @@
     el["gateway-url"].value = state.gateway;
     el["gateway-url"].readOnly = Boolean(runtimeGateway);
     el["gateway-hint"].textContent = runtimeGateway ? "Adres ustawiony w konfiguracji tej strony." : "Adres HTTPS serwera działającego na Macu Studio.";
-    el["gateway-details"].open = !state.gateway || isGitHubPages;
+    el["gateway-details"].open = !state.gateway;
     el["back-to-chat"].hidden = !state.ready;
     closeSidebar();
     queueMicrotask(() => (state.gateway ? el.password : el["gateway-url"]).focus());
@@ -143,6 +146,7 @@
     el["connection-indicator"].classList.toggle("connected", state.ready);
     el["connection-text"].textContent = state.ready ? "Połączono z Codex · ChatGPT" : "Codex wymaga połączenia";
     renderRateLimits(status.rateLimits);
+    applyBudget(status.budget);
     if (!state.ready) {
       const message = status.connected !== true ? "Codex na Macu Studio jest niedostępny. Uruchom go i odśwież połączenie." : status.authMode !== "chatgpt" ? "Zaloguj Codexa na Macu Studio przez konto ChatGPT, aby korzystać z jego limitów." : "Codex nie udostępnił teraz modeli Astra ani Sol. Odśwież połączenie po sprawdzeniu konfiguracji.";
       setError(message);
@@ -198,7 +202,7 @@
     el.model.disabled = !state.ready || busy;
     el.effort.disabled = !state.ready || !state.model || busy;
     el.prompt.disabled = !state.ready;
-    el.send.disabled = !state.ready || !state.model || !state.effort || !el.prompt.value.trim() || busy;
+    el.send.disabled = !state.ready || !state.model || !state.effort || !el.prompt.value.trim() || busy || !budgetAllowsSend();
     el.send.hidden = busy;
     el.stop.hidden = !busy;
     el.stop.disabled = Boolean(state.run?.stopping);
@@ -207,7 +211,7 @@
     el.refresh.disabled = busy;
     el["connection-settings"].disabled = busy;
     el.logout.disabled = busy;
-    el["composer-hint"].textContent = busy ? (activeChat()?.id !== state.selectedId ? "Codex odpowiada w innej rozmowie." : "Codex odpowiada…") : !state.ready ? "Oczekiwanie na połączenie z Codexem." : !state.model ? "Najpierw wybierz model." : "Enter — wyślij · Shift + Enter — nowa linia";
+    el["composer-hint"].textContent = !state.ready ? "Oczekiwanie na połączenie z Codexem." : state.budget?.allowed === false ? budgetHint() : busy ? (activeChat()?.id !== state.selectedId ? "Codex odpowiada w innej rozmowie." : "Codex odpowiada…") : !budgetAllowsSend() ? budgetHint() : !state.model ? "Najpierw wybierz model." : "Enter — wyślij · Shift + Enter — nowa linia";
     el["empty-description"].textContent = !state.ready ? "Łączenie z Codexem…" : !state.model ? "Wybierz model i zacznij rozmowę." : `${modelName(state.model)} · ${effortName(state.effort)}. Napisz pierwszą wiadomość.`;
   }
   function renderChatList() {
@@ -329,11 +333,40 @@
     if (nearBottom || state.forceScroll) el.conversation.scrollTop = el.conversation.scrollHeight;
     state.forceScroll = false;
   }
+  function applyBudget(budget) {
+    state.budget = budget && typeof budget === "object" ? budget : null;
+    const fragment = document.createDocumentFragment();
+    const windows = Array.isArray(state.budget?.windows) ? state.budget.windows : [];
+    const share = state.budget?.sharePercent;
+    for (const window of windows) {
+      const row = document.createElement("div");
+      const fraction = window.remainingFractionPercent;
+      const remaining = typeof fraction === "number" && Number.isFinite(fraction) ? `${Math.max(0, Math.min(100, fraction)).toLocaleString("pl-PL", { maximumFractionDigits: 1 })}% pozostało` : "sprawdzanie limitu";
+      row.textContent = `Limit bramki: ${remaining}${window.label ? ` · ${String(window.label)}` : ""}`;
+      fragment.append(row);
+    }
+    if (!windows.length || state.budget?.enabled !== true) {
+      fragment.replaceChildren(document.createTextNode("Limit bramki jest sprawdzany."));
+    }
+    el["rate-limits"].replaceChildren(fragment);
+    el["rate-limits"].hidden = false;
+    const hasBudget = state.budget?.enabled === true && windows.length > 0;
+    el["budget-note"].textContent = hasBudget ? "Zużycie poza bramką nie pomniejsza jej puli." : "";
+    el["budget-note"].hidden = !el["budget-note"].textContent;
+    el["budget-details"].hidden = !hasBudget;
+    el["budget-estimate"].textContent = state.budget?.estimated === true ? `Orientacyjna pula tygodniowa${typeof share === "number" && Number.isFinite(share) ? ` (~${share}% limitu Codex)` : ""}.` : "Pula tygodniowa bramki.";
+    el["budget-method-note"].textContent = hasBudget ? String(state.budget.note || "To orientacyjny limit ustalony przez bramkę. Nie jest osobną pulą przyznaną przez OpenAI.") : "";
+    renderControls();
+  }
   function renderRateLimits(limits) {
     const windows = [];
+    const seen = new Set();
     function visit(value, depth = 0) {
       if (!value || typeof value !== "object" || depth > 5 || windows.length >= 2) return;
       if (typeof value.usedPercent === "number" && Number.isFinite(value.usedPercent)) {
+        const key = `${value.windowDurationMins}:${value.resetsAt}:${value.usedPercent}`;
+        if (seen.has(key)) return;
+        seen.add(key);
         const mins = Number(value.windowDurationMins);
         const period = mins >= 1440 ? `${Math.round(mins / 1440)} dni` : mins >= 60 ? `${Math.round(mins / 60)} h` : mins > 0 ? `${mins} min` : "";
         const left = Math.max(0, Math.min(100, Math.round(100 - value.usedPercent)));
@@ -342,7 +375,8 @@
       for (const child of Object.values(value)) visit(child, depth + 1);
     }
     visit(limits);
-    el["rate-limits"].textContent = windows.join(" · "); el["rate-limits"].hidden = !windows.length;
+    el["account-rate-limits"].textContent = windows.join(" · ");
+    el["account-limits-details"].hidden = !windows.length;
   }
   function render() { renderSelectors(); renderControls(); renderChatList(); renderConversation(); }
   function scheduleRender(forceScroll = false) {
@@ -371,10 +405,14 @@
     } else if (event.type === "usage") {
       run.usage = event.usage;
       if (event.usage?.rateLimits) renderRateLimits(event.usage.rateLimits);
+      if (event.usage?.budget) applyBudget(event.usage.budget);
+    } else if (event.type === "budget" || (event.type === "heartbeat" && event.budget)) {
+      applyBudget(event.budget);
     } else if (event.type === "error") {
       run.error = String(event.message || "Codex zakończył odpowiedź błędem."); setError(run.error);
     } else if (event.type === "done") {
       run.done = true; run.finalStatus = event.status || (event.error || run.error ? "failed" : "completed");
+      if (event.budget) applyBudget(event.budget);
       if (event.error) { run.error = String(event.error?.message || event.error); setError(run.error); }
     }
     scheduleRender();
@@ -408,7 +446,7 @@
   async function sendMessage(event) {
     event.preventDefault();
     const text = el.prompt.value.trim();
-    if (!text || !state.ready || !state.model || !state.effort || isBusy()) return;
+    if (!text || !state.ready || !state.model || !state.effort || isBusy() || !budgetAllowsSend()) return;
     let chat = selectedChat();
     const isNew = !chat;
     if (!chat) {
@@ -436,10 +474,16 @@
     } finally {
       chat.active = false;
       for (const message of run.assistantItems.values()) message.status = run.finalStatus;
+      const refreshStatus = Boolean((run.accepted || run.stopping) && state.token);
+      if (refreshStatus) applyBudget(null);
       state.run = null;
       render(); announce(run.finalStatus === "completed" ? "Odpowiedź jest gotowa." : "Generowanie zakończone.");
-      if ((run.accepted || run.stopping) && state.token) {
-        try { await loadChats(); } catch (error) { handleError(error); }
+      if (refreshStatus) {
+        const [chatsResult, statusResult] = await Promise.allSettled([loadChats(), jsonRequest("/api/status")]);
+        if (statusResult.status === "fulfilled") applyStatus(statusResult.value || {});
+        else { applyBudget(null); handleError(statusResult.reason); }
+        if (chatsResult.status === "rejected") handleError(chatsResult.reason);
+        render();
       }
       if (!el.app.hidden) el.prompt.focus();
     }
@@ -498,7 +542,7 @@
       const gateway = normalizeGateway(el["gateway-url"].value.trim() || state.gateway);
       state.gateway = gateway;
       if (!runtimeGateway) storageWrite(localStorage, "codex-chat-gateway", gateway);
-      state.token = ""; state.ready = false; el["back-to-chat"].hidden = true;
+      state.token = ""; state.ready = false; applyBudget(null); el["back-to-chat"].hidden = true;
       const body = await jsonRequest("/api/login", { method: "POST", auth: false, body: JSON.stringify({ password: el.password.value }) });
       if (!body?.sessionToken || typeof body.sessionToken !== "string") throw new ApiError("Bramka nie potwierdziła logowania.");
       state.token = body.sessionToken; storageWrite(sessionStorage, sessionKey(), state.token); el.password.value = "";
@@ -531,7 +575,7 @@
   el.logout.addEventListener("click", async () => {
     try { await jsonRequest("/api/logout", { method: "POST" }); }
     catch (error) { if (error.status !== 401) { handleError(error); return; } }
-    storageRemove(sessionStorage, sessionKey()); state.token = ""; state.ready = false; state.chats = []; state.selectedId = null; el.prompt.value = ""; showLogin();
+    storageRemove(sessionStorage, sessionKey()); state.token = ""; state.ready = false; state.chats = []; state.selectedId = null; applyBudget(null); el.prompt.value = ""; showLogin();
   });
   el["clear-history"].addEventListener("click", () => openDelete(state.chats.map((chat) => chat.id)));
   el["delete-cancel"].addEventListener("click", () => { if (!state.deleting) el["delete-dialog"].close(); });
