@@ -151,6 +151,37 @@ test('the cap blocks own generations and records overshoot without a negative re
   assert.equal(window(late).remainingFractionPercent, 0);
 });
 
+test('recalibration restores capacity without clearing spending, baselines or the renewal date', t => {
+  const { budget, path, now } = fixture(t);
+  budget.inspect(account(1));
+  budget.resizeAllowance(500000);
+  record(budget, 'thread', 'one', SOL, tokens(503000));
+  const before = JSON.parse(readFileSync(path));
+  assert.equal(budget.inspect().allowed, false);
+  const resized = budget.resizeAllowance(5000000);
+  assert.equal(resized.allowed, true);
+  assert.equal(window(resized).usedUnits, 503000);
+  assert.equal(window(resized).remainingFractionPercent, 89.94);
+  const after = JSON.parse(readFileSync(path));
+  assert.equal(after.epoch.startedAt, before.epoch.startedAt);
+  assert.equal(after.epoch.resetsAt, before.epoch.resetsAt);
+  assert.deepEqual(after.threads, before.threads);
+  assert.deepEqual(after.turns, before.turns);
+  const restarted = new Budget(path, now);
+  record(restarted, 'thread', 'one', SOL, tokens(503000));
+  assert.equal(window(restarted.inspect(account(99))).usedUnits, 503000);
+  record(restarted, 'thread', 'two', SOL, tokens(503100));
+  assert.equal(window(restarted.inspect()).usedUnits, 503100);
+});
+
+test('invalid recalibration cannot change an established budget', t => {
+  const { budget, path } = fixture(t);
+  budget.inspect();
+  const before = readFileSync(path, 'utf8');
+  for (const amount of [0, -1, 1.5, NaN, '5000000']) assert.throws(() => budget.resizeAllowance(amount));
+  assert.equal(readFileSync(path, 'utf8'), before);
+});
+
 test('a valid v1 account-delta state explicitly migrates without transferring global consumption', t => {
   const v1 = { version: 1, sharePercent: 10, baselines: { [JSON.stringify(['codex', 'primary', WEEK])]: 30 } };
   const { budget, path } = fixture(t, v1);

@@ -337,7 +337,6 @@
     state.budget = budget && typeof budget === "object" ? budget : null;
     const fragment = document.createDocumentFragment();
     const windows = Array.isArray(state.budget?.windows) ? state.budget.windows : [];
-    const share = state.budget?.sharePercent;
     for (const window of windows) {
       const row = document.createElement("div");
       const fraction = window.remainingFractionPercent;
@@ -354,7 +353,7 @@
     el["budget-note"].textContent = hasBudget ? "Zużycie poza bramką nie pomniejsza jej puli." : "";
     el["budget-note"].hidden = !el["budget-note"].textContent;
     el["budget-details"].hidden = !hasBudget;
-    el["budget-estimate"].textContent = state.budget?.estimated === true ? `Orientacyjna pula tygodniowa${typeof share === "number" && Number.isFinite(share) ? ` (~${share}% limitu Codex)` : ""}.` : "Pula tygodniowa bramki.";
+    el["budget-estimate"].textContent = hasBudget ? "Cel: około 10% limitu konta; pula szacowana i dostrajana na podstawie pomiarów." : "";
     el["budget-method-note"].textContent = hasBudget ? String(state.budget.note || "To orientacyjny limit ustalony przez bramkę. Nie jest osobną pulą przyznaną przez OpenAI.") : "";
     renderControls();
   }

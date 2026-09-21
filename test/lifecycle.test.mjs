@@ -85,7 +85,7 @@ async function harness(t) {
   const log = join(scratch, 'calls.jsonl');
   writeFileSync(binary, fixture, { mode: 0o700 });
   writeFileSync(join(scratch, 'access.json'), JSON.stringify({ salt: 'test-salt', hash: scryptSync('test-password', 'test-salt', 64).toString('hex') }));
-  const server = spawn(process.execPath, [new URL('../server/index.mjs', import.meta.url).pathname], { env: { ...process.env, PORT: '0', CHAT_DATA_DIR: scratch, CODEX_BIN: binary, LIFECYCLE_LOG: log }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = spawn(process.execPath, [new URL('../server/index.mjs', import.meta.url).pathname], { env: { ...process.env, PORT: '0', CHAT_DATA_DIR: scratch, CHAT_WEEKLY_BUDGET_UNITS: '500000', CODEX_BIN: binary, LIFECYCLE_LOG: log }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '', output = '';
   server.stderr.on('data', data => { stderr += data; });
   t.after(async () => {

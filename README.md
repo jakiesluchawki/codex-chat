@@ -4,11 +4,13 @@ Prosty, prywatny chatbot z wyborem **Astry**, **Sola** i mocy rozumowania. Lista
 
 Logowanie do strony jest osobne. Codex pozostaje zalogowany przez ChatGPT na Macu Studio. Rozmowy zużywają wspólny limit tego konta Codex; bramka nie używa klucza API ani nie przełącza się na rozliczenie API. Bramka nie zwiększa puli konta Codex.
 
-Bramka ma **niezależny tygodniowy licznik wyłącznie własnych rozmów**. Początkowa pula wynosi **500 000 umownych jednostek**. Inne zadania Codexa nie pomniejszają tego licznika. Pełne limity konta nadal obowiązują i mogą osobno zablokować odpowiedzi po stronie Codexa.
+Bramka ma **niezależny tygodniowy licznik wyłącznie własnych rozmów**. Domyślna pula wynosi **5 000 000 umownych jednostek**. Inne zadania Codexa nie pomniejszają tego licznika. Pełne limity konta nadal obowiązują i mogą osobno zablokować odpowiedzi po stronie Codexa.
 
-Rzeczywiste odczyty tokenów własnych rozmów są przeliczane lokalnie: wejście bez cache × 1, wejście z cache × 0,1, wyjście × 4; następnie Astra × 2 albo Sol × 1. To pomocnicze wagi do kalibracji, a nie udokumentowany sposób rozliczania Codexa. Pula 500 000 jest orientacyjną wartością początkową dla celu około 10%; nie można potwierdzić dokładnych 10% ukrytej puli Codexa.
+Rzeczywiste odczyty tokenów własnych rozmów są przeliczane lokalnie: wejście bez cache × 1, wejście z cache × 0,1, wyjście × 4; następnie Astra × 2 albo Sol × 1. To pomocnicze wagi do kalibracji, a nie udokumentowany sposób rozliczania Codexa. Pula 5 000 000 jest orientacyjną korektą po pomiarze: pierwotne 500 000 wyczerpało się, gdy konto nadal pokazywało 99% pozostałego limitu. Ten współdzielony i zaokrąglony odczyt nie potwierdza dokładnych 10% ukrytej puli Codexa.
 
 `CHAT_WEEKLY_BUDGET_UNITS` pozwala dostroić pulę na podstawie pomiarów własnych rozmów; nowa wartość obowiązuje od kolejnego tygodniowego okna. Stan w `.data/budget.json` przetrwa restart serwera. Kolejne tygodniowe okno odnawia własną pulę bramki. Zużycie innych zadań nie zmienia jej automatycznie.
+
+Do świadomej korekty bieżącego okresu użyj po zatrzymaniu usługi `npm run budget -- 5000000 --data-dir /ścieżka/do/.data`, a następnie uruchom ją ponownie. Skrypt tworzy prywatną kopię licznika i zachowuje dotychczasowe zużycie, historię naliczeń oraz datę odnowienia. Sama zmiana wartości domyślnej w kodzie nie zwiększa puli trwającego okresu.
 
 Codex może podać zużycie dopiero po zakończeniu odpowiedzi. Bramka blokuje kolejne wiadomości po wyczerpaniu puli, ale ostatnia odpowiedź może przekroczyć pozostały budżet. To orientacyjny ogranicznik użycia, a nie gwarancja zachowania dokładnie 90% limitu konta.
 

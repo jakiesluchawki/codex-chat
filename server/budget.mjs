@@ -3,7 +3,7 @@ import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 export const SHARE_PERCENT = 10;
-export const DEFAULT_WEEKLY_BUDGET_UNITS = 500_000;
+export const DEFAULT_WEEKLY_BUDGET_UNITS = 5_000_000;
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 const MODELS = new Map([['gpt-6-astra', 2], ['gpt-5.6-sol', 1]]);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -110,7 +110,7 @@ export class Budget {
     const missing = this.invalidState || this.storageError || this.state.meteringError || !epoch;
     const remainingFraction = epoch ? clamp((epoch.allowanceUnits - epoch.usedUnits) / epoch.allowanceUnits * 100, 0, 100) : 0;
     const number = new Intl.NumberFormat('pl-PL').format(epoch?.allowanceUnits || DEFAULT_WEEKLY_BUDGET_UNITS);
-    const note = 'Niezależny limit naliczamy wyłącznie z tokenów tego chatbota. ' + number + ' umownych jednostek na 7 dni to orientacyjny punkt startowy dla udziału około 10%; wielkość puli konta w tokenach nie jest znana. Wagi tokenów i modeli są umowne. Codex może zgłosić zużycie dopiero po odpowiedzi, więc ostatnia odpowiedź może przekroczyć pozostałą pulę.';
+    const note = 'Niezależny limit naliczamy wyłącznie z tokenów tego chatbota. Pula ' + number + ' umownych jednostek na 7 dni jest szacowana i dostrajana na podstawie pomiarów. Celem jest około 10% limitu konta; wielkość puli konta w tokenach nie jest znana. Wagi tokenów i modeli są umowne. Codex może zgłosić zużycie dopiero po odpowiedzi, więc ostatnia odpowiedź może przekroczyć pozostałą pulę.';
     return {
       enabled: true, sharePercent: SHARE_PERCENT, estimated: true,
       allowed: !missing && epoch.usedUnits < epoch.allowanceUnits,
@@ -155,6 +155,15 @@ export class Budget {
       this.commit(next);
     }
     return this.view(accountLimits);
+  }
+
+  resizeAllowance(allowanceUnits) {
+    if (!positiveInteger(allowanceUnits)) throw new Error('Pula musi być dodatnią liczbą całkowitą.');
+    if (this.inspect().missing) throw new Error('Nie można zmienić nieprawidłowego lub niezapisywalnego licznika.');
+    const next = structuredClone(this.state);
+    next.epoch.allowanceUnits = allowanceUnits;
+    if (!this.commit(next)) throw new Error('Nie można zapisać zmienionej puli.');
+    return this.view();
   }
 
   recordUsage({ threadId, turnId, key, model, tokenUsage, usage } = {}) {

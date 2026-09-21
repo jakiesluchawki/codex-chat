@@ -9,6 +9,7 @@
     "start": "node server/index.mjs",
     "test": "node --test",
     "password": "node scripts/set-password.mjs",
+    "budget": "node scripts/resize-budget.mjs",
     "install:macos": "node scripts/install-macos.mjs",
     "install:https": "node scripts/install-https-macos.mjs",
     "uninstall:macos": "node scripts/uninstall-macos.mjs",
