@@ -1,3 +1,2 @@
-// Publiczny adres HTTPS bramki na Macu Studio. Nigdy nie wpisuj tutaj hasła.
-// Puste pole korzysta z serwera tej strony. Na GitHub Pages adres można wpisać przy logowaniu.
-window.CHAT_GATEWAY_URL = "";
+// Publiczny adres HTTPS bramki. Nie wpisuj tutaj hasła ani tokenów.
+window.CHAT_GATEWAY_URL = "https://pete-printing-screening-reductions.trycloudflare.com";
